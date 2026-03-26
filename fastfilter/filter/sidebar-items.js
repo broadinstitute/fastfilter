@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["FilterMode","VariantClass"],"fn":["compute_is_snv_site","filter_gbdt","filter_record","filter_thresholds","genotype_is_fully_missing","mask_gt_by_sample","process_batch","rnc_bad_from_raw","symbol_is_non_ref","variant_class_from_lengths"],"struct":["FilterCtx","GbdtCfg","Stats","ThresholdCfg"]};

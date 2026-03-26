@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Command","Mode"],"fn":["main","prepare_input","run_filter"],"mod":["eval","filter","vcfeval"],"struct":["Cli","FilterArgs"]};
