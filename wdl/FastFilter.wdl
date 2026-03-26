@@ -7,6 +7,9 @@ task FastFilterSingleVcf {
     String docker_image = "ghcr.io/broadinstitute/fastfilter:latest"
   }
 
+  Int disk_size_gb = 1 + 3*ceil(size([input_vcf], "GB"))
+
+
   command <<<
     set -euo pipefail
 
@@ -23,12 +26,13 @@ task FastFilterSingleVcf {
 
   runtime {
     docker: docker_image
-    cpu: 1
-    memory: "2G"
+    memory: "8 GB"
+    cpu: 4
+    disks: "local-disk ~{disk_size_gb} SSD"
   }
 }
 
-workflow fastfilter_single_vcf {
+workflow FastFilter {
   input {
     File input_vcf
     String output_vcf_name = "filtered.vcf.gz"
