@@ -15,3 +15,4 @@ tempfile = "3.10"
 num_cpus = "1.16"
 which = "6.0"
 plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "ttf", "line_series"] }
+openssl = { version = "0.10", features = ["vendored"] }
