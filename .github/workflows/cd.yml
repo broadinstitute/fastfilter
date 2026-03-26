@@ -1,0 +1,149 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write commit message
+        run: git log --format=%B -n 1 ${{ github.event.after }} > release_notes.txt
+
+      - name: Bump Cargo patch version
+        id: version-bump
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          cargo_toml = pathlib.Path("Cargo.toml")
+          text = cargo_toml.read_text()
+          match = re.search(r'^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"', text, flags=re.M)
+          if not match:
+              raise SystemExit("Could not find semantic version in Cargo.toml")
+
+          major, minor, patch = map(int, match.groups())
+          new_ver = f"{major}.{minor}.{patch + 1}"
+          new_text = re.sub(
+              r'^version\s*=\s*"\d+\.\d+\.\d+"',
+              f'version = "{new_ver}"',
+              text,
+              count=1,
+              flags=re.M,
+          )
+          cargo_toml.write_text(new_text)
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"new_ver={new_ver}\n")
+          PY
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml
+          git commit -m "chore: bump version to ${{ steps.version-bump.outputs.new_ver }} [skip ci]" || echo "No changes to commit"
+          git tag "v${{ steps.version-bump.outputs.new_ver }}"
+
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tags: true
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Build Rust binary
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfreetype6-dev libfontconfig1-dev
+          cargo build --release --locked
+          strip target/release/fastfilter
+          sccache --show-stats
+
+      - name: Create GitHub release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version-bump.outputs.new_ver }}
+          release_name: v${{ steps.version-bump.outputs.new_ver }}
+          body_path: release_notes.txt
+          draft: false
+          prerelease: false
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.repository }}-${{ hashFiles('docker/**') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-${{ github.repository }}-
+            ${{ runner.os }}-buildx-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/fastfilter:${{ steps.version-bump.outputs.new_ver }}
+            ghcr.io/${{ github.repository_owner }}/fastfilter:latest
+          cache-from: |
+            type=local,src=/tmp/.buildx-cache
+            type=gha,scope=${{ github.workflow }}
+          cache-to: |
+            type=local,dest=/tmp/.buildx-cache-new,mode=max
+            type=gha,mode=max,scope=${{ github.workflow }}
+          build-contexts: |
+            binary=./target/release
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
